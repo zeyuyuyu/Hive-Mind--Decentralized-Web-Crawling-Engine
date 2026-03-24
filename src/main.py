@@ -1,37 +1,50 @@
-import asyncio
-import random
-from typing import List
+import requests
+from bs4 import BeautifulSoup
+import hashlib
+import json
+import time
+from datetime import datetime
+from random import randint
+from typing import List, Dict
 
-class DistributedCrawler:
-    def __init__(self, nodes: List[str], max_concurrency: int = 100):
-        self.nodes = nodes
-        self.max_concurrency = max_concurrency
-        self.semaphore = asyncio.Semaphore(max_concurrency)
+class WebCrawler:
+    def __init__(self, start_urls: List[str], max_depth: int = 3, delay: float = 1.0):
+        self.start_urls = start_urls
+        self.max_depth = max_depth
+        self.delay = delay
+        self.visited_urls = set()
+        self.crawl_queue = start_urls.copy()
+        self.data = {}
 
-    async def crawl(self, url: str) -> str:
-        async with self.semaphore:
-            node = random.choice(self.nodes)
-            response = await self._fetch_from_node(node, url)
-            return response
+    def crawl(self):
+        while self.crawl_queue and len(self.visited_urls) < self.max_depth:
+            url = self.crawl_queue.pop(0)
+            if url not in self.visited_urls:
+                self.visited_urls.add(url)
+                try:
+                    response = requests.get(url)
+                    soup = BeautifulSoup(response.content, 'html.parser')
+                    content = soup.get_text()
+                    hash_value = hashlib.sha256(content.encode()).hexdigest()
+                    self.data[url] = {
+                        'content': content,
+                        'hash': hash_value,
+                        'timestamp': datetime.now().isoformat()
+                    }
+                    for link in soup.find_all('a'):
+                        href = link.get('href')
+                        if href and href.startswith('http'):
+                            self.crawl_queue.append(href)
+                except:
+                    pass
+                time.sleep(self.delay)
 
-    async def _fetch_from_node(self, node: str, url: str) -> str:
-        # Implement logic to fetch the URL from the specified node
-        # This could involve making an HTTP request to the node, or using a distributed protocol like IPFS
-        await asyncio.sleep(random.uniform(0.1, 1.0))  # Simulating network delay
-        return f'Content from node {node}: {url}'
-
-async def main():
-    nodes = ['node1.example.com', 'node2.example.com', 'node3.example.com']
-    crawler = DistributedCrawler(nodes)
-
-    urls = ['https://example.com/page1', 'https://example.com/page2', 'https://example.com/page3',
-            'https://example.com/page4', 'https://example.com/page5']
-
-    tasks = [crawler.crawl(url) for url in urls]
-    results = await asyncio.gather(*tasks)
-
-    for result in results:
-        print(result)
+    def save_data(self, filename: str):
+        with open(filename, 'w') as f:
+            json.dump(self.data, f, indent=4)
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    start_urls = ['https://www.example.com', 'https://www.google.com', 'https://www.github.com']
+    crawler = WebCrawler(start_urls, max_depth=3, delay=2.0)
+    crawler.crawl()
+    crawler.save_data('crawl_data.json')
