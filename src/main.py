@@ -1,50 +1,42 @@
-import requests
-from bs4 import BeautifulSoup
-import hashlib
-import json
-import time
-from datetime import datetime
-from random import randint
-from typing import List, Dict
+import asyncio
+import aiohttp
+from collections import deque
+from typing import Deque, Set, Dict
 
-class WebCrawler:
-    def __init__(self, start_urls: List[str], max_depth: int = 3, delay: float = 1.0):
-        self.start_urls = start_urls
-        self.max_depth = max_depth
-        self.delay = delay
-        self.visited_urls = set()
-        self.crawl_queue = start_urls.copy()
-        self.data = {}
+class DistributedTaskScheduler:
+    def __init__(self, num_workers: int):
+        self.num_workers = num_workers
+        self.task_queue: Deque[str] = deque()
+        self.in_progress: Set[str] = set()
+        self.results: Dict[str, str] = {}
 
-    def crawl(self):
-        while self.crawl_queue and len(self.visited_urls) < self.max_depth:
-            url = self.crawl_queue.pop(0)
-            if url not in self.visited_urls:
-                self.visited_urls.add(url)
-                try:
-                    response = requests.get(url)
-                    soup = BeautifulSoup(response.content, 'html.parser')
-                    content = soup.get_text()
-                    hash_value = hashlib.sha256(content.encode()).hexdigest()
-                    self.data[url] = {
-                        'content': content,
-                        'hash': hash_value,
-                        'timestamp': datetime.now().isoformat()
-                    }
-                    for link in soup.find_all('a'):
-                        href = link.get('href')
-                        if href and href.startswith('http'):
-                            self.crawl_queue.append(href)
-                except:
-                    pass
-                time.sleep(self.delay)
+    async def add_task(self, url: str):
+        self.task_queue.append(url)
+        await self.schedule_tasks()
 
-    def save_data(self, filename: str):
-        with open(filename, 'w') as f:
-            json.dump(self.data, f, indent=4)
+    async def schedule_tasks(self):
+        while len(self.in_progress) < self.num_workers and self.task_queue:
+            url = self.task_queue.popleft()
+            self.in_progress.add(url)
+            asyncio.create_task(self.process_task(url))
 
-if __name__ == '__main__':
-    start_urls = ['https://www.example.com', 'https://www.google.com', 'https://www.github.com']
-    crawler = WebCrawler(start_urls, max_depth=3, delay=2.0)
-    crawler.crawl()
-    crawler.save_data('crawl_data.json')
+    async def process_task(self, url: str):
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as response:
+                content = await response.text()
+                self.results[url] = content
+        self.in_progress.remove(url)
+        await self.schedule_tasks()
+
+    async def run(self):
+        await asyncio.gather(*[self.schedule_tasks() for _ in range(self.num_workers)])
+        return self.results
+
+if __:
+    scheduler = DistributedTaskScheduler(num_workers=10)
+    urls = ['https://example.com', 'https://google.com', 'https://github.com']
+    for url in urls:
+        asyncio.create_task(scheduler.add_task(url))
+    results = asyncio.run(scheduler.run())
+    for url, content in results.items():
+        print(f'URL: {url}, Content: {content[:100]}...')
